@@ -9,13 +9,15 @@ class RepoPilotState(TypedDict):
     # Inputs
     file_path: str
     original_code: str
+    repo_url: str
+    branch: Optional[str]
 
     # LLM Generated Context
     architect_plan: str
     current_diff: Optional[EngineerDiffOutput]
     diff_history: Annotated[List[EngineerDiffOutput], operator.add]
 
-    # Sandbox Execution (Phase 3)
+    # Sandbox Execution
     sandbox_logs: str
     errors: Annotated[List[str], operator.add]
     loop_count: int
@@ -24,4 +26,4 @@ class RepoPilotState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
     # Graph Control
-    status: str  # "planning", "engineering", "qa_failed", "compiling", "success", "failed_wip"
+    status: str  # "planning", "engineering", "qa_failed", "compiling", "sandbox_failed", "success", "failed_wip"
