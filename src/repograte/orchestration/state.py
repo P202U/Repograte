@@ -1,4 +1,10 @@
-from typing import TypedDict, Annotated, List, Optional
+from typing import (
+    TypedDict,
+    Annotated,
+    List,
+    Optional,
+    NotRequired,
+)
 import operator
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
@@ -11,19 +17,19 @@ class RepoPilotState(TypedDict):
     original_code: str
     repo_url: str
     branch: Optional[str]
+    loop_count: int
 
     # LLM Generated Context
-    architect_plan: str
-    current_diff: Optional[EngineerDiffOutput]
+    architect_plan: NotRequired[str]
+    current_diff: NotRequired[Optional[EngineerDiffOutput]]
     diff_history: Annotated[List[EngineerDiffOutput], operator.add]
 
     # Sandbox Execution
-    sandbox_logs: str
+    sandbox_logs: NotRequired[str]
     errors: Annotated[List[str], operator.add]
-    loop_count: int
 
     # Core LangGraph message history
     messages: Annotated[list[BaseMessage], add_messages]
 
     # Graph Control
-    status: str  # "planning", "engineering", "qa_failed", "compiling", "sandbox_failed", "success", "failed_wip"
+    status: NotRequired[str]

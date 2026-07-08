@@ -1,14 +1,19 @@
+import uuid
 from typing import cast, Any
+
 from pydantic import SecretStr
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
+from langgraph.types import interrupt
 
 from ..config import settings
 from ..sandbox.e2b_runner import E2BRunner
+from ..vcs.github_utils import build_pr_body, create_pull_request
 from .state import RepoPilotState
 from .schemas import EngineerDiffOutput, QAValidationResult
 
+# Initialize Models
 claude_model = ChatAnthropic(
     model_name="claude-4-5-sonnet",
     temperature=0.2,
@@ -17,6 +22,7 @@ claude_model = ChatAnthropic(
     api_key=SecretStr(settings.anthropic_api_key),
 )
 
+# DeepSeek for fast, cheap QA and JSON enforcement
 deepseek_model = ChatOpenAI(
     model="deepseek-chat",
     api_key=SecretStr(settings.deepseek_api_key),
@@ -47,24 +53,19 @@ def apply_diff(original_code: str, diff: EngineerDiffOutput) -> str:
                 "it must uniquely identify one location. Include more surrounding context."
             )
         patched = patched.replace(block.search_block, block.replace_block, 1)
-
     return patched
 
 
 def architect_node(state: RepoPilotState) -> dict[str, Any]:
     """Queries context and writes the migration blueprint."""
     system_prompt = "You are a Principal AI Architect. Write a step-by-step plan to migrate this React Class Component to Hooks."
-
     message = HumanMessage(
         content=f"File: {state['file_path']}\nCode:\n{state['original_code']}"
     )
-
     response = claude_model.invoke([SystemMessage(content=system_prompt), message])
-
     architect_plan = (
         response.content if isinstance(response.content, str) else str(response.content)
     )
-
     return {
         "architect_plan": architect_plan,
         "status": "engineering",
@@ -75,14 +76,16 @@ def architect_node(state: RepoPilotState) -> dict[str, Any]:
 def engineer_node(state: RepoPilotState) -> dict[str, Any]:
     """Takes the Architect's plan (or QA's/Debugger's feedback) and generates the Search/Replace Diff."""
     system_prompt = "You are a Senior Engineer. Execute the architect's plan strictly using the Search/Replace schema."
-
     structured_engineer = claude_model.with_structured_output(
         EngineerDiffOutput, method="json_schema"
     )
-
     prompt = f"Plan:\n{state.get('architect_plan')}\n\nOriginal Code:\n{state.get('original_code')}"
 
-    if state.get("status") in ("qa_failed", "sandbox_failed") and state.get("errors"):
+    if state.get("status") in (
+        "qa_failed",
+        "sandbox_failed",
+        "human_rejected",
+    ) and state.get("errors"):
         prompt += f"\n\nFeedback from the last attempt - fix these issues:\n{state['errors'][-1]}"
 
     response = cast(
@@ -91,7 +94,6 @@ def engineer_node(state: RepoPilotState) -> dict[str, Any]:
             [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
         ),
     )
-
     diff_history = list(state.get("diff_history", []))
     diff_history.append(response)
 
@@ -123,11 +125,9 @@ def qa_node(state: RepoPilotState) -> dict[str, Any]:
         "verified to exist verbatim in the source. Judge only whether the "
         "replacement code is logically sound React/Hooks code."
     )
-
     structured_qa = deepseek_model.with_structured_output(
         QAValidationResult, method="json_schema"
     )
-
     prompt = f"Original:\n{state.get('original_code')}\n\nDiff Proposed:\n{diff.model_dump_json()}"
 
     validation = cast(
@@ -175,22 +175,18 @@ def sandbox_node(state: RepoPilotState) -> dict[str, Any]:
 
     runner = E2BRunner()
 
-    state_dict = cast(dict[str, Any], state)
     repo_url = state.get("repo_url")
-    if repo_url is None:
-        raise ValueError("repo_url is missing")
+    if not repo_url:
+        raise ValueError("Sandbox node executed without a repo_url in state.")
 
     file_path = state.get("file_path")
     if file_path is None:
         raise ValueError("file_path is missing")
 
-    if not repo_url:
-        raise ValueError("Sandbox node executed without a repo_url in state.")
-
     result = runner.run_verification(
-        repo_url=state["repo_url"],
-        branch=state["branch"],
-        file_path=state["file_path"],
+        repo_url=repo_url,
+        branch=state.get("branch"),
+        file_path=file_path,
         file_content=patched_code,
     )
 
@@ -222,7 +218,6 @@ def debugger_node(state: RepoPilotState) -> dict[str, Any]:
         "sandbox output, identify the root cause in 3-5 sentences and state "
         "precisely what the engineer should change. Do not restate the full logs."
     )
-
     # Safely get logs/errors from state and cast to string to prevent slicing errors on null types
     logs = str(state.get("sandbox_logs", ""))
     errors = state.get("errors", [""])
@@ -242,3 +237,76 @@ def debugger_node(state: RepoPilotState) -> dict[str, Any]:
         "errors": [response.content],
         "messages": [response],
     }
+
+
+def human_review_node(state: RepoPilotState) -> dict[str, Any]:
+    """
+    Pauses the graph and waits for a human to approve, reject, or send
+    feedback before anything gets pushed.
+    """
+    diff = state.get("current_diff")
+    decision = interrupt(
+        {
+            "file_path": state.get("file_path"),
+            "status": state.get("status"),
+            "reasoning": diff.reasoning if diff else "",
+            "diff": [b.model_dump() for b in diff.blocks] if diff else [],
+            "loop_count": state.get("loop_count", 0),
+            "sandbox_logs": str(state.get("sandbox_logs", ""))[-2000:],
+        }
+    )
+
+    # Expected resume payload: {"approved": bool, "feedback": Optional[str]}
+    if decision.get("approved"):
+        return {"human_approved": True}
+
+    feedback = (
+        decision.get("feedback")
+        or "Human rejected the diff without additional feedback."
+    )
+    current_errors = list(state.get("errors", []))
+    current_errors.append(f"Human feedback: {feedback}")
+
+    return {
+        "human_approved": False,
+        "status": "human_rejected",
+        "errors": current_errors,
+    }
+
+
+def publish_pr_node(state: RepoPilotState) -> dict[str, Any]:
+    """Applies the approved diff to a fresh clone and opens the PR."""
+    diff = state.get("current_diff")
+    if diff is None:
+        raise ValueError("Publish PR node executed without a current diff.")
+
+    patched_code = apply_diff(state["original_code"], diff)
+    is_wip = state.get("status") == "failed_wip"
+
+    file_path = state.get("file_path", "")
+    slug = file_path.rsplit("/", 1)[-1].split(".")[0].lower()
+    branch_name = f"repo-pilot/{slug}-{uuid.uuid4().hex[:8]}"
+    title_prefix = "[WIP] " if is_wip else ""
+
+    diff_history_summaries = [d.reasoning for d in state.get("diff_history", [])]
+
+    pr_body = build_pr_body(
+        reasoning=diff.reasoning,
+        diff_history_summaries=diff_history_summaries,
+        final_status=state.get("status", ""),
+        sandbox_logs_excerpt=state.get("sandbox_logs", ""),
+    )
+
+    pr_url = create_pull_request(
+        repo_url=state["repo_url"],
+        base_branch=state.get("branch") or "main",
+        file_path=file_path,
+        patched_code=patched_code,
+        branch_name=branch_name,
+        commit_message=f"{title_prefix}Repo-Pilot: migrate {file_path} to hooks",
+        pr_title=f"{title_prefix}Migrate {file_path} to Hooks",
+        pr_body=pr_body,
+        draft=is_wip,
+    )
+
+    return {"pr_url": pr_url, "status": "pr_opened"}

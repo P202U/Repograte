@@ -4,7 +4,7 @@ from .ast_parser import ASTComponent
 
 
 class CodeIndexer:
-    def __init__(self, collection_name: str = "repo_pilot_ast"):
+    def __init__(self, collection_name: str = "repograte_ast"):
         self.client = QdrantClient(":memory:")
         self.client.set_model("BAAI/bge-small-en-v1.5")
         self.collection_name = collection_name
