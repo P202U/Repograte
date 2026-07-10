@@ -22,6 +22,10 @@ class CodeIndexer:
 
         self._ensure_collection()
 
+    def _generate_stable_id(self, identifier: str) -> str:
+        """Creates a consistent UUID based on the file/component name."""
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, identifier))
+
     def _ensure_collection(self):
         """Creates the Qdrant collection if it doesn't exist."""
         if not self.client.collection_exists(self.collection_name):
@@ -36,7 +40,7 @@ class CodeIndexer:
         metadata = []
         ids = []
 
-        # 1. Indexes the class as a whole summary
+        # Indexes the class as a whole summary
         documents.append(f"Class: {component.name}\n{component.raw_code}")
         metadata.append(
             {
@@ -47,9 +51,10 @@ class CodeIndexer:
                 "dependencies": component.dependencies,
             }
         )
-        ids.append(str(uuid.uuid4()))
+        class_id = self._generate_stable_id(f"{file_path}::{component.name}")
+        ids.append(class_id)
 
-        # 2. Indexes individual methods for hyper-specific context retrieval
+        # Indexes individual methods for hyper-specific context retrieval
         for method in component.methods:
             documents.append(
                 f"Method: {method.name} in {component.name}\n{method.code_snippet}"
@@ -64,7 +69,10 @@ class CodeIndexer:
                     "lines": f"{method.start_line}-{method.end_line}",
                 }
             )
-            ids.append(str(uuid.uuid4()))
+            method_id = self._generate_stable_id(
+                f"{file_path}::{component.name}::{method.name}"
+            )
+            ids.append(method_id)
 
         self.client.add(
             collection_name=self.collection_name,
@@ -73,7 +81,7 @@ class CodeIndexer:
             ids=ids,
         )
         logger.debug(
-            "Indexed %s and %d methods.", component.name, len(component.methods)
+            "Upserted %s and %d methods.", component.name, len(component.methods)
         )
 
     def retrieve_context(self, query: str, limit: int = 3) -> list[dict]:
