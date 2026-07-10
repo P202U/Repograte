@@ -1,11 +1,22 @@
+import logging
 import uuid
 from qdrant_client import QdrantClient
+
+from ..config import settings
 from .ast_parser import ASTComponent
+
+logger = logging.getLogger(__name__)
 
 
 class CodeIndexer:
     def __init__(self, collection_name: str = "repograte_ast"):
-        self.client = QdrantClient(":memory:")
+        if settings.qdrant_url:
+            self.client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
+            )
+        else:
+            self.client = QdrantClient(":memory:")
         self.client.set_model("BAAI/bge-small-en-v1.5")
         self.collection_name = collection_name
 
@@ -25,7 +36,7 @@ class CodeIndexer:
         metadata = []
         ids = []
 
-        # 1. Index the class as a whole summary
+        # 1. Indexes the class as a whole summary
         documents.append(f"Class: {component.name}\n{component.raw_code}")
         metadata.append(
             {
@@ -33,11 +44,12 @@ class CodeIndexer:
                 "file_path": file_path,
                 "component_name": component.name,
                 "code": component.raw_code,
+                "dependencies": component.dependencies,
             }
         )
         ids.append(str(uuid.uuid4()))
 
-        # 2. Index individual methods for hyper-specific context retrieval
+        # 2. Indexes individual methods for hyper-specific context retrieval
         for method in component.methods:
             documents.append(
                 f"Method: {method.name} in {component.name}\n{method.code_snippet}"
@@ -60,7 +72,9 @@ class CodeIndexer:
             metadata=metadata,
             ids=ids,
         )
-        print(f"✅ Indexed {component.name} and {len(component.methods)} methods.")
+        logger.debug(
+            "Indexed %s and %d methods.", component.name, len(component.methods)
+        )
 
     def retrieve_context(self, query: str, limit: int = 3) -> list[dict]:
         """Allows the Architect Agent to search the codebase semantically."""

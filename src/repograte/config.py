@@ -6,22 +6,39 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # --- LLMs ---
+    # LLMs
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
 
-    # --- Sandbox (Phase 3) ---
+    # Sandbox
     e2b_api_key: str = ""
     e2b_template: str = "base"
     e2b_timeout_seconds: int = 300
+    # Verification commands run inside the sandbox. Override per-project via env vars
+    # (or per-run with `--install-cmd` / `--test-cmd`) for non-TypeScript repos, e.g.:
+    #   SANDBOX_TEST_CMD="npm run lint"
+    sandbox_install_cmd: str = "npm install --no-audit --no-fund"
+    sandbox_test_cmd: str = "npx tsc --noEmit"
 
-    # --- VCS ---
+    # VCS
     github_token: str = ""
 
-    # --- Vector store ---
+    # Vector store
     qdrant_url: str = ""
     qdrant_api_key: str = ""
+    # Best-effort retrieval of sibling components in the target repo, surfaced to the
+    # Architect as extra context. Requires cloning the repo and downloading a small
+    # embedding model on first use; set to False to skip entirely (e.g. offline/CI use).
+    enable_rag_context: bool = True
+    rag_max_files: int = 40
+
+    # Orchestration
+    max_correction_loops: int = 4
+    # Path to a SQLite file for checkpoint persistence
+    # Set to "" to use a pure in-memory checkpointer instead (state is lost when the process exits).
+    checkpoint_path: str = ".repograte/checkpoints.sqlite"
 
 
 settings = Settings()
