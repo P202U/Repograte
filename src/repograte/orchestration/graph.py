@@ -1,8 +1,13 @@
+import sqlite3
+from pathlib import Path
+
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
+from ..config import settings
 from .state import RepoPilotState
+from .routing import route_after_qa, route_after_sandbox, route_after_human_review
 from .nodes import (
     architect_node,
     engineer_node,
@@ -13,33 +18,28 @@ from .nodes import (
     publish_pr_node,
 )
 
-# Conditional Routing Functions
+_ALLOWED_MSGPACK_MODULES = [("repograte.orchestration.schemas", "EngineerDiffOutput")]
 
 
-def route_after_qa(state: RepoPilotState) -> str:
-    """Routes back to the engineer on failure, or advances to sandbox validation."""
-    if state.get("status") == "qa_failed":
-        return "engineer"
-    return "sandbox"
-
-
-def route_after_sandbox(state: RepoPilotState) -> str:
+def _build_default_checkpointer():
     """
-    Failsafe routing after Sandbox execution. Both successful runs and
-    exhausted loops ('failed_wip') are forwarded to human review.
+    settings.checkpoint_path set (the default) -> SQLite-backed, so a run
+    interrupted at human_review - or killed mid-sandbox-run - can actually be
+    resumed by re-running the same command later, since the thread_id
+    (f"{repo_url}:{file_path}", set in run_cli.py) is looked up against a
+    file on disk rather than a dict that only exists inside one process.
     """
-    if state.get("status") in ("success", "failed_wip"):
-        return "human_review"
-    if state.get("loop_count", 0) >= 4:
-        return "human_review"  # Defensive fallback
-    return "debugger"
+    serde = JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_MSGPACK_MODULES)
 
+    if not settings.checkpoint_path:
+        return MemorySaver(serde=serde)
 
-def route_after_human_review(state: RepoPilotState) -> str:
-    """Routes to PR publication if approved, or loops back to engineering with feedback."""
-    if state.get("human_approved"):
-        return "publish_pr"
-    return "engineer"
+    path = Path(settings.checkpoint_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    return SqliteSaver(conn, serde=serde)
 
 
 # Graph Construction
@@ -73,6 +73,7 @@ def build_graph(checkpointer=None):
         {
             "engineer": "engineer",
             "sandbox": "sandbox",
+            "human_review": "human_review",
         },
     )
 
@@ -94,13 +95,7 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # Checkpointer & State Persistence Config
     if checkpointer is None:
-        serde = JsonPlusSerializer(
-            allowed_msgpack_modules=[
-                ("repo_pilot.orchestration.schemas", "EngineerDiffOutput")
-            ]
-        )
-        checkpointer = MemorySaver(serde=serde)
+        checkpointer = _build_default_checkpointer()
 
     return workflow.compile(checkpointer=checkpointer)

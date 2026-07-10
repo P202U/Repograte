@@ -18,6 +18,10 @@ class RepoPilotState(TypedDict):
     repo_url: str
     branch: Optional[str]
     loop_count: int
+    # Optional per-run overrides of the configured sandbox commands
+    # (falls back to settings.sandbox_install_cmd / settings.sandbox_test_cmd when absent).
+    install_cmd: NotRequired[Optional[str]]
+    test_cmd: NotRequired[Optional[str]]
 
     # LLM Generated Context
     architect_plan: NotRequired[str]
@@ -27,9 +31,9 @@ class RepoPilotState(TypedDict):
     # Sandbox Execution
     sandbox_logs: NotRequired[str]
     errors: Annotated[List[str], operator.add]
-
-    # Core LangGraph message history
     messages: Annotated[list[BaseMessage], add_messages]
 
     # Graph Control
     status: NotRequired[str]
+    human_approved: NotRequired[bool]
+    pr_url: NotRequired[str]
