@@ -19,7 +19,7 @@ The architecture underneath is not specific to that migration - swapping the Arc
 
 ```mermaid
 graph TD;
-	__start__([Start]):::startEnd
+	__start__([__start__]):::startEnd
 	architect(Architect Agent):::agent
 	engineer(Engineer Agent):::agent
 	qa_validator(QA Validator):::qa
@@ -27,7 +27,7 @@ graph TD;
 	debugger(Log Debugger):::agent
 	human_review(Human Review Interrupt):::human
 	publish_pr(Publish PR):::infra
-	__end__([End]):::startEnd
+	__end__([__end__]):::last
 
 	__start__ --> architect;
 	architect --> engineer;
@@ -49,6 +49,7 @@ graph TD;
 	classDef infra fill:#022c22,stroke:#34d399,color:#ecfdf5,stroke-width:2px;
 	classDef human fill:#451a03,stroke:#fb923c,color:#fff7ed,stroke-width:2px;
 	classDef startEnd fill:#1e293b,stroke:#94a3b8,color:#cbd5e1,stroke-width:2px;
+	classDef last fill:#1e293b,stroke:#94a3b8,color:#cbd5e1,stroke-width:2px;
 ```
 
 | Node             | Model                      | Job                                                                                                                                                                                                                                       |
