@@ -27,14 +27,20 @@ class E2BRunner:
         file_path: str,
         file_content: str,
         branch: Optional[str] = None,
-        install_cmd: str = "npm install --no-audit --no-fund",
-        test_cmd: str = "npx tsc --noEmit",
+        install_cmd: Optional[str] = None,
+        test_cmd: Optional[str] = None,
         setup_cmds: Optional[List[str]] = None,
     ) -> SandboxRunResult:
         """
         Clones `repo_url`, overwrites `file_path` with `file_content`,
         then runs `install_cmd` and `test_cmd` from the repo root.
+
+        `install_cmd`/`test_cmd` default to settings.sandbox_install_cmd /
+        settings.sandbox_test_cmd (configurable via env vars or a per-run
+        --install-cmd/--test-cmd CLI flag)
         """
+        install_cmd = install_cmd or settings.sandbox_install_cmd
+        test_cmd = test_cmd or settings.sandbox_test_cmd
 
         with Sandbox.create(
             template=self.template, timeout=self.timeout, api_key=settings.e2b_api_key
@@ -83,7 +89,6 @@ class E2BRunner:
             target_path = f"{self.repo_dir}/{file_path.lstrip('/')}"
             sbx.files.write(target_path, file_content)
 
-            # Run compilation dependencies installation
             install_result = sbx.commands.run(
                 install_cmd, cwd=self.repo_dir, timeout=self.timeout
             )
@@ -96,7 +101,6 @@ class E2BRunner:
                     step="install",
                 )
 
-            # Run verification test command
             test_result = sbx.commands.run(
                 test_cmd, cwd=self.repo_dir, timeout=self.timeout
             )
