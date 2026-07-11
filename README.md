@@ -1,20 +1,19 @@
 # Repograte
 
-[![Python Version](https://img.shields.io/badge/python-3.12%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Built with LangGraph](https://img.shields.io/badge/Engine-LangGraph-8A2BE2?style=for-the-badge)](https://github.com/langchain-ai/langgraph)
-[![Sandbox](https://img.shields.io/badge/Sandbox-E2B%20MicroVM-ff6b6b?style=for-the-badge)](https://e2b.dev)
-[![Package Manager](https://img.shields.io/badge/maintained%20with-uv-06b6d4?style=for-the-badge)](https://github.com/astral-sh/uv)
+<p align="left">
+  <img src="https://img.shields.io/badge/python-3.12%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python Version" />
+  <img src="https://img.shields.io/badge/Engine-LangGraph-8A2BE2?style=for-the-badge" alt="Built with LangGraph" />
+  <img src="https://img.shields.io/badge/Sandbox-E2B%20MicroVM-ff6b6b?style=for-the-badge" alt="Sandbox" />
+  <img src="https://img.shields.io/badge/maintained%20with-uv-06b6d4?style=for-the-badge" alt="Package Manager" />
+</p>
 
-An autonomous migration agent that takes a single file, plans a refactor, writes it,
-verifies it in a real sandboxed environment, self-corrects on failure, and stops for
-a human before anything gets pushed.
+An autonomous migration agent that takes a single file, plans a refactor, writes it, verifies it in a real sandboxed environment, self-corrects on failure, and stops for a human before anything gets pushed.
 
 Scoped MVP: **migrating React class components to functional components with hooks.**
-The architecture underneath is not specific to that migration - swapping the
-Architect/Engineer prompts and the sandbox's verification command targets a
-different mechanical migration entirely. It also isn't limited to TypeScript: the
-parser and sandbox both work against plain `.js`/`.jsx` too (see [Configuration
-reference](#%EF%B8%8F-configuration-reference)).
+
+The architecture underneath is not specific to that migration - swapping the Architect/Engineer prompts and the sandbox's verification command targets a different mechanical migration entirely. It also isn't limited to TypeScript: the parser and sandbox both work against plain `.js`/`.jsx` too (see [Configuration reference](#%EF%B8%8F-configuration-reference)).
+
+---
 
 ## 🚀 How it works
 
