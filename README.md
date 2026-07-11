@@ -14,7 +14,7 @@ The architecture underneath is not specific to that migration - swapping the
 Architect/Engineer prompts and the sandbox's verification command targets a
 different mechanical migration entirely. It also isn't limited to TypeScript: the
 parser and sandbox both work against plain `.js`/`.jsx` too (see [Configuration
-reference](#configuration-reference)).
+reference](#%EF%B8%8F-configuration-reference)).
 
 ## 🚀 How it works
 
