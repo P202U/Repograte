@@ -49,11 +49,39 @@ def build_pr_body(
     return "\n".join(lines)
 
 
+def build_codebase_pr_body(
+    migration_name: str,
+    converged: dict[str, str],
+    wip: dict[str, str],
+) -> str:
+    """PR body for a codebase-wide run: one PR covering every file that
+    reached a result, converged or not. `converged`/`wip` map file_path ->
+    a short summary (the Engineer's reasoning, or a failure note)."""
+    lines = [
+        f"# Repograte: {migration_name}",
+        "",
+        f"{len(converged)} file(s) converged; {len(wip)} needs manual finishing.",
+    ]
+
+    if converged:
+        lines.append("\n## Converged")
+        for path, summary in converged.items():
+            lines.append(f"\n### `{path}`")
+            lines.append(summary)
+
+    if wip:
+        lines.append("\n## Needs a human to finish (hit the retry cap)")
+        for path, summary in wip.items():
+            lines.append(f"\n### `{path}`")
+            lines.append(summary)
+
+    return "\n".join(lines)
+
+
 def create_pull_request(
     repo_url: str,
     base_branch: str,
-    file_path: str,
-    patched_code: str,
+    files: dict[str, str],
     branch_name: str,
     commit_message: str,
     pr_title: str,
@@ -61,22 +89,31 @@ def create_pull_request(
     draft: bool = False,
 ) -> str:
     """
-    Clones `repo_url` at `base_branch`, writes `patched_code` over
-    `file_path` on `branch_name`, commits, pushes, and opens a PR.
-    Returns the PR's URL.
+    Clones `repo_url` at `base_branch`, writes every path in `files`
+    (relative repo path -> new content) on `branch_name`, commits everything
+    in one commit, pushes, and opens a PR. Returns the PR's URL.
+
+    `files` holds one entry for a single-file run, or every approved file
+    from a codebase-wide run - either way, one PR is opened for the whole
+    batch rather than one per file, since that's how a human actually wants
+    to review "migrate this codebase" (a single coherent PR, not N of them).
 
     Raises RuntimeError immediately (before cloning anything) if GITHUB_TOKEN
     isn't set.
     """
+    if not files:
+        raise ValueError("create_pull_request called with no files to write.")
+
     if not settings.github_token:
         raise RuntimeError(
             "GITHUB_TOKEN is not set. A token with 'repo' scope is required to "
             "push a branch and open a pull request - set it and re-run; the "
-            "approved diff hasn't been touched, so nothing is lost by retrying."
+            "approved diff(s) haven't been touched, so nothing is lost by retrying."
         )
 
     clone_url = repo_url
     if clone_url.startswith("https://"):
+        # Inject the token into the URL so the push is authenticated without mutating the machine's global git config.
         clone_url = clone_url.replace(
             "https://", f"https://x-access-token:{settings.github_token}@", 1
         )
@@ -88,14 +125,16 @@ def create_pull_request(
         new_branch = repo.create_head(branch_name)
         new_branch.checkout()
 
-        full_path = f"{workdir}/{file_path.lstrip('/')}"
-        with open(full_path, "w") as f:
-            f.write(patched_code)
+        for file_path, patched_code in files.items():
+            full_path = f"{workdir}/{file_path.lstrip('/')}"
+            with open(full_path, "w") as f:
+                f.write(patched_code)
 
-        repo.index.add([file_path])
+        repo.index.add(list(files.keys()))
         repo.index.commit(commit_message)
         repo.remote("origin").push(branch_name)
     finally:
+        # Otherwise every PR created leaves a full clone behind in /tmp forever.
         shutil.rmtree(workdir, ignore_errors=True)
 
     gh = Github(auth=Auth.Token(settings.github_token))

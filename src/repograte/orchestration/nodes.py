@@ -34,7 +34,6 @@ def _get_claude_model() -> ChatAnthropic:
 
 @functools.lru_cache(maxsize=1)
 def _get_deepseek_model() -> ChatOpenAI:
-    # Fast, cheap JSON-schema-enforcing QA judge.
     return ChatOpenAI(
         model="deepseek-chat",
         api_key=SecretStr(settings.deepseek_api_key),
@@ -58,7 +57,6 @@ def architect_node(state: RepoPilotState) -> dict[str, Any]:
     prompt = f"File: {state['file_path']}\nCode:\n{state['original_code']}"
 
     if settings.enable_rag_context:
-        # Best-effort: never let a context-retrieval failure take down the run.
         try:
             extra_context = gather_repo_context(
                 repo_url=state["repo_url"],
@@ -250,7 +248,6 @@ def debugger_node(state: RepoPilotState) -> dict[str, Any]:
     if diff is None:
         raise ValueError("Debugger node executed without a current diff.")
 
-    # Safely get logs/errors from state and cast to string to prevent slicing errors on null types
     logs = str(state.get("sandbox_logs", ""))
     errors = state.get("errors", [""])
 
