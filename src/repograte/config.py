@@ -40,5 +40,13 @@ class Settings(BaseSettings):
     # Set to "" to use a pure in-memory checkpointer instead (state is lost when the process exits).
     checkpoint_path: str = ".repograte/checkpoints.sqlite"
 
+    # Codebase-wide runs
+    default_migration: str = "react-class-to-hooks"
+    # Hard cap on how many files a single codebase-wide run will touch, independent
+    # of rag_max_files (which only bounds how many sibling files get scanned for
+    # context, not how many get migrated). Keeps a mistaken --repo-url pointed at a
+    # huge monorepo from turning into an unbounded number of LLM/sandbox calls.
+    codebase_max_files: int = 100
+
 
 settings = Settings()
