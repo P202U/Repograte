@@ -14,6 +14,7 @@ from ..ingestion.context import gather_repo_context
 from ..sandbox.e2b_runner import E2BRunner
 from ..vcs.github_utils import build_pr_body, create_pull_request
 from .diffing import apply_diff
+from .migration_spec import MigrationSpec
 from .state import RepoPilotState
 from .schemas import EngineerDiffOutput, QAValidationResult
 
@@ -33,6 +34,7 @@ def _get_claude_model() -> ChatAnthropic:
 
 @functools.lru_cache(maxsize=1)
 def _get_deepseek_model() -> ChatOpenAI:
+    # Fast, cheap JSON-schema-enforcing QA judge.
     return ChatOpenAI(
         model="deepseek-chat",
         api_key=SecretStr(settings.deepseek_api_key),
@@ -41,19 +43,30 @@ def _get_deepseek_model() -> ChatOpenAI:
     )
 
 
+def _get_spec(state: RepoPilotState) -> MigrationSpec:
+    """Every node's prompts/scope/sandbox-cmds come from here instead of
+    being hardcoded, so a different MigrationSpec (a YAML file, see
+    orchestration/migration_spec.py) targets a different migration entirely
+    without touching this module. Stored in state as a plain dict so it
+    round-trips through the checkpointer without a serde allowlist entry."""
+    return MigrationSpec.model_validate(state["migration_spec"])
+
+
 def architect_node(state: RepoPilotState) -> dict[str, Any]:
     """Queries context and writes the migration blueprint."""
-    system_prompt = "You are a Principal AI Architect. Write a step-by-step plan to migrate this React Class Component to Hooks."
-
+    spec = _get_spec(state)
     prompt = f"File: {state['file_path']}\nCode:\n{state['original_code']}"
 
     if settings.enable_rag_context:
+        # Best-effort: never let a context-retrieval failure take down the run.
         try:
             extra_context = gather_repo_context(
                 repo_url=state["repo_url"],
                 branch=state.get("branch"),
                 current_file_path=state["file_path"],
                 current_code=state["original_code"],
+                file_extensions=spec.file_extensions,
+                overlay=state.get("repo_overlay"),
                 max_files=settings.rag_max_files,
             )
             if extra_context:
@@ -65,7 +78,7 @@ def architect_node(state: RepoPilotState) -> dict[str, Any]:
 
     message = HumanMessage(content=prompt)
     response = _get_claude_model().invoke(
-        [SystemMessage(content=system_prompt), message]
+        [SystemMessage(content=spec.architect_prompt), message]
     )
     architect_plan = (
         response.content if isinstance(response.content, str) else str(response.content)
@@ -79,7 +92,7 @@ def architect_node(state: RepoPilotState) -> dict[str, Any]:
 
 def engineer_node(state: RepoPilotState) -> dict[str, Any]:
     """Takes the Architect's plan (or QA's/Debugger's feedback) and generates the Search/Replace Diff."""
-    system_prompt = "You are a Senior Engineer. Execute the architect's plan strictly using the Search/Replace schema."
+    spec = _get_spec(state)
     structured_engineer = _get_claude_model().with_structured_output(
         EngineerDiffOutput, method="json_schema"
     )
@@ -95,12 +108,14 @@ def engineer_node(state: RepoPilotState) -> dict[str, Any]:
     response = cast(
         EngineerDiffOutput,
         structured_engineer.invoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+            [SystemMessage(content=spec.engineer_prompt), HumanMessage(content=prompt)]
         ),
     )
     diff_history = list(state.get("diff_history", []))
     diff_history.append(response)
 
+    # This is "attempt N" - qa_node/sandbox_node read it (without incrementing
+    # again) to decide whether the correction-loop cap has been hit.
     attempt = state.get("loop_count", 0) + 1
 
     return {
@@ -116,6 +131,7 @@ def qa_node(state: RepoPilotState) -> dict[str, Any]:
     DeepSeek validates the diff before sending it to the Sandbox.
     Mechanical matching is done in code, logically sound judgement by DeepSeek.
     """
+    spec = _get_spec(state)
     diff = state.get("current_diff")
     if diff is None:
         raise ValueError("QA node executed without a current diff.")
@@ -126,6 +142,9 @@ def qa_node(state: RepoPilotState) -> dict[str, Any]:
         current_errors = list(state.get("errors", []))
         if message:
             current_errors.append(message)
+        # Once the correction-loop cap is hit, stop retrying (even though we
+        # never reached the sandbox) and fall through to human review instead
+        # of looping engineer<->qa_validator forever.
         status = (
             "failed_wip" if loop_count >= settings.max_correction_loops else "qa_failed"
         )
@@ -136,11 +155,6 @@ def qa_node(state: RepoPilotState) -> dict[str, Any]:
     except ValueError as e:
         return _qa_failed(f"Mechanical diff check failed: {e}")
 
-    system_prompt = (
-        "You are a QA Agent. The search/replace blocks have already been "
-        "verified to exist verbatim in the source. Judge only whether the "
-        "replacement code is logically sound React/Hooks code."
-    )
     structured_qa = _get_deepseek_model().with_structured_output(
         QAValidationResult, method="json_schema"
     )
@@ -149,7 +163,7 @@ def qa_node(state: RepoPilotState) -> dict[str, Any]:
     validation = cast(
         QAValidationResult,
         structured_qa.invoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+            [SystemMessage(content=spec.qa_prompt), HumanMessage(content=prompt)]
         ),
     )
 
@@ -176,10 +190,12 @@ def _sandbox_failure(error_message: str, logs: str, loop_count: int) -> dict[str
 
 def sandbox_node(state: RepoPilotState) -> dict[str, Any]:
     """Applies the current diff and verifies it for real inside an E2B microVM."""
+    spec = _get_spec(state)
     diff = state.get("current_diff")
     if diff is None:
         raise ValueError("Sandbox node executed without a current diff.")
 
+    # Set by engineer_node for this attempt; not incremented again here.
     loop_count = state.get("loop_count", 0)
 
     try:
@@ -197,13 +213,18 @@ def sandbox_node(state: RepoPilotState) -> dict[str, Any]:
     if file_path is None:
         raise ValueError("file_path is missing")
 
+    # Verify against the cumulative state of the migration so far: every
+    # previously-approved file in a codebase-wide run (empty for a
+    # single-file run), plus this file's own new patch on top.
+    files = {**state.get("repo_overlay", {}), file_path: patched_code}
+
     result = runner.run_verification(
         repo_url=repo_url,
         branch=state.get("branch"),
-        file_path=file_path,
-        file_content=patched_code,
-        install_cmd=state.get("install_cmd") or settings.sandbox_install_cmd,
-        test_cmd=state.get("test_cmd") or settings.sandbox_test_cmd,
+        files=files,
+        install_cmd=state.get("install_cmd") or spec.sandbox_install_cmd,
+        test_cmd=state.get("test_cmd") or spec.sandbox_test_cmd,
+        setup_cmds=spec.sandbox_setup_cmds,
     )
 
     if result.success:
@@ -224,15 +245,11 @@ def sandbox_node(state: RepoPilotState) -> dict[str, Any]:
 
 def debugger_node(state: RepoPilotState) -> dict[str, Any]:
     """Turns raw sandbox failure output into a short, focused correction instruction for the Engineer."""
+    spec = _get_spec(state)
     diff = state.get("current_diff")
     if diff is None:
         raise ValueError("Debugger node executed without a current diff.")
 
-    system_prompt = (
-        "You are a Debugging Agent. Given a failed code change and its "
-        "sandbox output, identify the root cause in 3-5 sentences and state "
-        "precisely what the engineer should change. Do not restate the full logs."
-    )
     # Safely get logs/errors from state and cast to string to prevent slicing errors on null types
     logs = str(state.get("sandbox_logs", ""))
     errors = state.get("errors", [""])
@@ -245,7 +262,7 @@ def debugger_node(state: RepoPilotState) -> dict[str, Any]:
     )
 
     response = _get_claude_model().invoke(
-        [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
+        [SystemMessage(content=spec.debugger_prompt), HumanMessage(content=prompt)]
     )
 
     return {
@@ -291,15 +308,25 @@ def human_review_node(state: RepoPilotState) -> dict[str, Any]:
 
 
 def publish_pr_node(state: RepoPilotState) -> dict[str, Any]:
-    """Applies the approved diff to a fresh clone and opens the PR."""
+    """Applies the approved diff and either opens a PR immediately
+    (single-file run) or, in a codebase-wide run (state["defer_publish"] is
+    True), just hands the final patched code back to the driver, which
+    batches every approved file into one PR at the end instead of opening
+    one per file."""
     diff = state.get("current_diff")
     if diff is None:
         raise ValueError("Publish PR node executed without a current diff.")
 
     patched_code = apply_diff(state["original_code"], diff)
     is_wip = state.get("status") == "failed_wip"
-
     file_path = state.get("file_path", "")
+
+    if state.get("defer_publish"):
+        return {
+            "patched_code": patched_code,
+            "status": "failed_wip" if is_wip else "approved",
+        }
+
     slug = file_path.rsplit("/", 1)[-1].split(".")[0].lower()
     branch_name = f"repograte/{slug}-{uuid.uuid4().hex[:8]}"
     title_prefix = "[WIP] " if is_wip else ""
@@ -316,8 +343,7 @@ def publish_pr_node(state: RepoPilotState) -> dict[str, Any]:
     pr_url = create_pull_request(
         repo_url=state["repo_url"],
         base_branch=state.get("branch") or "main",
-        file_path=file_path,
-        patched_code=patched_code,
+        files={file_path: patched_code},
         branch_name=branch_name,
         commit_message=f"{title_prefix}Repograte: migrate {file_path} to hooks",
         pr_title=f"{title_prefix}Migrate {file_path} to Hooks",
