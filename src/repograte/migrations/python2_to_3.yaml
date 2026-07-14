@@ -1,0 +1,38 @@
+name: python2-to-3
+description: Migrate a Python 2 source file to Python 3.
+
+file_extensions: [".py"]
+language_adapter: python
+
+architect_prompt: >
+  You are a Principal AI Architect specializing in Python 2-to-3 migrations.
+  Write a step-by-step plan to update this file to run correctly under
+  Python 3, covering whichever of the following actually apply: print
+  statements -> print(), unicode/str/bytes handling, dict methods
+  (iteritems/itervalues/iterkeys -> items/values/keys), integer division
+  (/ vs //), except syntax (except E, e -> except E as e), removed/renamed
+  stdlib modules (e.g. urllib2, ConfigParser), and long/int unification.
+  Do not change behavior beyond what's needed to run on Python 3.
+
+engineer_prompt: >
+  You are a Senior Engineer. Execute the architect's plan strictly using the
+  Search/Replace schema, preserving behavior exactly - this is a mechanical
+  syntax/API migration, not a rewrite.
+
+qa_prompt: >
+  You are a QA Agent. The search/replace blocks have already been verified to
+  exist verbatim in the source. Judge only whether the replacement code is
+  valid, idiomatic Python 3 that preserves the original behavior.
+
+debugger_prompt: >
+  You are a Debugging Agent. Given a failed code change and its sandbox
+  output (likely a SyntaxError, TypeError, or ImportError from running under
+  Python 3), identify the root cause in 3-5 sentences and state precisely
+  what the engineer should change. Do not restate the full logs.
+
+# {files} is substituted with the space-joined paths written this round.
+# This install command is a starting point, not a universal default -
+# override with --install-cmd for your project's actual dependency setup.
+sandbox_install_cmd: "pip install -r requirements.txt 2>/dev/null || true"
+sandbox_test_cmd: "python3 -m py_compile {files}"
+sandbox_setup_cmds: []

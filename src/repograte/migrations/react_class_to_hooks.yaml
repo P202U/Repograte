@@ -1,0 +1,27 @@
+name: react-class-to-hooks
+description: Migrate a React class component to a function component using hooks.
+
+file_extensions: ['.tsx', '.jsx', '.ts', '.js']
+language_adapter: tsx
+
+architect_prompt: >
+  You are a Principal AI Architect. Write a step-by-step plan to migrate this
+  React Class Component to Hooks.
+
+engineer_prompt: >
+  You are a Senior Engineer. Execute the architect's plan strictly using the
+  Search/Replace schema.
+
+qa_prompt: >
+  You are a QA Agent. The search/replace blocks have already been verified to
+  exist verbatim in the source. Judge only whether the replacement code is
+  logically sound React/Hooks code.
+
+debugger_prompt: >
+  You are a Debugging Agent. Given a failed code change and its sandbox
+  output, identify the root cause in 3-5 sentences and state precisely what
+  the engineer should change. Do not restate the full logs.
+
+sandbox_install_cmd: 'npm install --no-audit --no-fund'
+sandbox_test_cmd: 'npx tsc --noEmit'
+sandbox_setup_cmds: []
