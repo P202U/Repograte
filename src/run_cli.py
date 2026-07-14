@@ -1,7 +1,12 @@
 import argparse
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
+from repograte.config import settings
 from repograte.orchestration.graph import build_graph
+from repograte.orchestration.migration_spec import (
+    list_builtin_specs,
+    load_migration_spec,
+)
 from repograte.orchestration.state import RepoPilotState
 
 
@@ -40,23 +45,26 @@ def main():
         ),
     )
     parser.add_argument(
+        "--migration",
+        default=settings.default_migration,
+        help=f"Built-in: {', '.join(list_builtin_specs())}. Or a path to your own YAML file.",
+    )
+    parser.add_argument(
         "--install-cmd",
         default=None,
-        help="Override the sandbox's install command for this run only "
-        "(falls back to settings.sandbox_install_cmd).",
+        help="Override the migration spec's sandbox install command for this run only.",
     )
     parser.add_argument(
         "--test-cmd",
         default=None,
-        help="Override the sandbox's verification command for this run only "
-        "(falls back to settings.sandbox_test_cmd). Use this for non-TypeScript "
-        'projects, e.g. --test-cmd "npm run lint".',
+        help="Override the migration spec's sandbox test command for this run only. "
+        'Use this for non-TypeScript projects, e.g. --test-cmd "npm run lint".',
     )
     args = parser.parse_args()
 
     graph = build_graph()
+    spec = load_migration_spec(args.migration)
 
-    # thread_id identifies this run across the pause/resume boundary.
     thread_id = f"{args.repo_url}:{args.file_path}"
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
@@ -87,6 +95,8 @@ def main():
             "messages": [],
             "install_cmd": args.install_cmd,
             "test_cmd": args.test_cmd,
+            "migration_spec": spec.model_dump(),
+            "repo_overlay": {},
         }
         result = graph.invoke(state, config=config)
         pending = _pending_interrupt(result)
