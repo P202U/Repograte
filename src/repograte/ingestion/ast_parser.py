@@ -24,11 +24,7 @@ SUPPORTED_EXTENSIONS = (".tsx", ".jsx", ".ts", ".js")
 
 
 class TSXParser:
-    """Extracts React class components (and their imports) from TS/TSX/JS/JSX source.
-
-    Despite the name (kept for backwards compatibility), this handles plain
-    JavaScript and JSX files too - see SUPPORTED_EXTENSIONS.
-    """
+    """Extracts React class components (and their imports) from TS/TSX/JS/JSX source."""
 
     def __init__(self):
         self.language = Language(tsts.language_tsx())
