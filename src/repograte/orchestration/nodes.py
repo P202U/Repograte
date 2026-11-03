@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _get_claude_model() -> ChatAnthropic:
     return ChatAnthropic(
         model_name=settings.anthropic_model,
-        temperature=0.2,
+        # temperature=0.2,
         timeout=None,
         stop=None,
         api_key=SecretStr(settings.anthropic_api_key),
@@ -35,7 +35,7 @@ def _get_claude_model() -> ChatAnthropic:
 @functools.lru_cache(maxsize=1)
 def _get_deepseek_model() -> ChatOpenAI:
     return ChatOpenAI(
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         api_key=SecretStr(settings.deepseek_api_key),
         base_url=settings.deepseek_base_url,
         temperature=0,

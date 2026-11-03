@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # LLMs
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
+    anthropic_model: str = "claude-sonnet-5-5"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
 
